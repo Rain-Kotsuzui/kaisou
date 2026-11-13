@@ -1,0 +1,78 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "toolchainFile": "$env{ProgramFiles(x86)}/Microsoft Visual Studio/2022/BuildTools/VC/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "$env{ProgramFiles(x86)}/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/out/vcpkg_installed"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug - Validation and trace logging",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENGINE_BUILD_MODE": "Debug",
+        "ENGINE_LOG_LEVEL": "Trace",
+        "ENGINE_ENABLE_LOGGING": "ON",
+        "ENGINE_ENABLE_PROFILING": "OFF",
+        "ENGINE_ENABLE_VALIDATION": "ON",
+        "ENGINE_ENABLE_ASSERTS": "ON"
+      }
+    },
+    {
+      "name": "daily",
+      "displayName": "Daily - Optimized profiler instrumentation",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "ENGINE_BUILD_MODE": "Daily",
+        "ENGINE_LOG_LEVEL": "Info",
+        "ENGINE_ENABLE_LOGGING": "ON",
+        "ENGINE_ENABLE_PROFILING": "ON",
+        "ENGINE_ENABLE_VALIDATION": "OFF",
+        "ENGINE_ENABLE_ASSERTS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release - Final distribution",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENGINE_BUILD_MODE": "Release",
+        "ENGINE_LOG_LEVEL": "Warn",
+        "ENGINE_ENABLE_LOGGING": "ON",
+        "ENGINE_ENABLE_PROFILING": "OFF",
+        "ENGINE_ENABLE_VALIDATION": "OFF",
+        "ENGINE_ENABLE_ASSERTS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "daily",
+      "configurePreset": "daily"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    }
+  ]
+}

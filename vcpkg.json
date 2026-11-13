@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "kaisou",
+  "version-semver": "0.1.0",
+  "builtin-baseline": "af2c387aa62cf2d0909cd50f4049f2bee1ab682b",
+  "dependencies": [
+    "catch2",
+    "fmt",
+    "glm",
+    "sdl3",
+    "spdlog",
+    "tracy"
+  ]
+}
