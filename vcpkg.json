@@ -7,8 +7,19 @@
     "catch2",
     "fmt",
     "glm",
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
     "spdlog",
-    "tracy"
+    {
+      "name": "tracy",
+      "features": [
+        "on-demand"
+      ]
+    },
+    "xxhash"
   ]
 }

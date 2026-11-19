@@ -26,35 +26,82 @@ if(NOT ENGINE_BUILD_MODE IN_LIST _engine_valid_modes)
     message(FATAL_ERROR "ENGINE_BUILD_MODE must be Debug, Daily, or Release")
 endif()
 
+if(ENGINE_ENABLE_PROFILING)
+    find_package(Tracy CONFIG REQUIRED)
+endif()
+
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(xxHash CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
 
+add_library(kaisou_engine STATIC
+    engine/src/application.cpp
+)
 add_library(kaisou_core STATIC
     engine/src/core/log.cpp
+    engine/src/core/assert.cpp
+    engine/src/core/filesystem.cpp
+    engine/src/core/hash.cpp
+    engine/src/core/frame_limiter.cpp
+)
+add_library(kaisou_platform STATIC
+    engine/src/platform/window.cpp
+    engine/src/platform/platform.cpp
+    engine/src/platform/input.cpp
 )
 
+
+target_include_directories(kaisou_engine PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/engine/include"
+)
 target_include_directories(kaisou_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/include"
 )
-
-target_link_libraries(kaisou_core PUBLIC
-    spdlog::spdlog
-    fmt::fmt
+target_include_directories(kaisou_platform PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/engine/include"
 )
+
+
+
+target_link_libraries(kaisou_core
+    PUBLIC
+        fmt::fmt
+        spdlog::spdlog
+    PRIVATE
+        xxHash::xxhash
+)
+target_link_libraries(kaisou_platform
+    PUBLIC
+        kaisou_core
+    PRIVATE
+        SDL3::SDL3
+)
+target_link_libraries(kaisou_engine PUBLIC
+    kaisou_core
+    kaisou_platform
+)
+
 
 target_compile_definitions(kaisou_core PUBLIC
     KAISOU_ENABLE_LOGGING=$<BOOL:${ENGINE_ENABLE_LOGGING}>
+    KAISOU_ENABLE_ASSERTS=$<BOOL:${ENGINE_ENABLE_ASSERTS}>
+    KAISOU_ENABLE_PROFILING=$<BOOL:${ENGINE_ENABLE_PROFILING}>
 )
 
 add_executable(kaisou
     app/main.cpp
 )
 
-
 target_link_libraries(kaisou PRIVATE
-    kaisou_core
+    kaisou_engine
 )
 
+if(ENGINE_ENABLE_PROFILING)
+    target_link_libraries(kaisou_core PUBLIC
+        Tracy::TracyClient
+    )
+endif()
 
 set_target_properties(kaisou PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
