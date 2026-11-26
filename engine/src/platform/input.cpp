@@ -106,7 +106,15 @@ namespace kaisou::platform
             }
         }
     }
+    InputSnapshot InputSystem::LiveResizeSnapshot() const noexcept
+    {
+        InputSnapshot liveSnapshot{};
 
+        liveSnapshot.focused_ = snapshot_.focused_;
+        liveSnapshot.mousePosition_ = snapshot_.mousePosition_;
+
+        return liveSnapshot;
+    }
     void InputSystem::Initialize(SDL_Window* window)
     {
         snapshot_ = {};

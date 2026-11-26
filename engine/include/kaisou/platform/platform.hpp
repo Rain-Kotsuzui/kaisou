@@ -6,12 +6,15 @@
 #include "kaisou/core/time.hpp"
 
 #include <memory>
+#include <exception>
 
 namespace kaisou::platform
 {
     class Platform final
     {
     public:
+        using LiveResizeCallback = void (*)(void *context, const InputSnapshot &input);
+
         explicit Platform(const WindowConfig &config);
         ~Platform();
 
@@ -22,6 +25,10 @@ namespace kaisou::platform
         Platform &operator=(Platform &&) = delete;
 
         void PollEvents();
+
+        // 只能在主线程、回调执行之外绑定
+        void BindLiveResizeCallback(LiveResizeCallback callback, void *context);
+        void UnbindLiveResizeCallback() noexcept;
 
         static void WaitFor(core::Duration duration);
 
@@ -35,9 +42,19 @@ namespace kaisou::platform
         const InputSnapshot &Input() const noexcept;
 
     private:
+        struct EventWatcher;
+
+        void HandleRedrawEvent(const SDL_Event &event) noexcept;
+
         std::unique_ptr<Window> window_;
         InputSystem input_;
         bool quitRequested_ = false;
+
+        LiveResizeCallback liveResizeCallback_ = nullptr;
+        void *liveResizeContext_ = nullptr;
+        std::exception_ptr liveResizeException_;
+        bool eventWatchRegistered_ = false;
+        bool liveResizeExecuting_ = false;
     };
 }
 

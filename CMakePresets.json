@@ -25,9 +25,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ENGINE_BUILD_MODE": "Debug",
-        "ENGINE_ENABLE_LOGGING": "OFF",
+        "ENGINE_ENABLE_LOGGING": "ON",
         "ENGINE_ENABLE_PROFILING": "OFF",
         "ENGINE_ENABLE_VALIDATION": "ON",
+        "ENGINE_ENABLE_GPU_DEBUG": "ON",
         "ENGINE_ENABLE_ASSERTS": "ON"
       }
     },
@@ -41,6 +42,7 @@
         "ENGINE_ENABLE_LOGGING": "ON",
         "ENGINE_ENABLE_PROFILING": "ON",
         "ENGINE_ENABLE_VALIDATION": "OFF",
+        "ENGINE_ENABLE_GPU_DEBUG": "OFF",
         "ENGINE_ENABLE_ASSERTS": "ON"
       }
     },
@@ -54,6 +56,7 @@
         "ENGINE_ENABLE_LOGGING": "OFF",
         "ENGINE_ENABLE_PROFILING": "OFF",
         "ENGINE_ENABLE_VALIDATION": "OFF",
+        "ENGINE_ENABLE_GPU_DEBUG": "OFF",
         "ENGINE_ENABLE_ASSERTS": "OFF"
       }
     }

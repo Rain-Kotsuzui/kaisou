@@ -30,7 +30,7 @@ namespace kaisou::platform
 
         bool operator==(const WindowState &) const noexcept = default;
     };
-    
+
     class Window final
     {
     public:
@@ -47,12 +47,13 @@ namespace kaisou::platform
 
         [[nodiscard]]
         const WindowState &State() const noexcept;
-
         [[nodiscard]]
         bool StateChanged() const noexcept;
 
         [[nodiscard]]
         bool IsDrawable() const noexcept;
+        [[nodiscard]]
+        SDL_Window *NativeHandle() const noexcept;
 
     private:
         friend class Platform;

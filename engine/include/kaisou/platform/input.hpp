@@ -121,6 +121,7 @@ namespace kaisou::platform
 
     private:
         friend class Platform;
+        [[nodiscard]] InputSnapshot LiveResizeSnapshot() const noexcept;
 
         void Initialize(SDL_Window* window);
         void BeginFrame() noexcept;

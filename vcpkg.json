@@ -20,6 +20,8 @@
         "on-demand"
       ]
     },
-    "xxhash"
+    "xxhash",
+    "volk",
+    "vk-bootstrap"
   ]
 }

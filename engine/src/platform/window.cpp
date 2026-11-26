@@ -132,4 +132,8 @@ namespace kaisou::platform
                state_.pixelWidth > 0 &&
                state_.pixelHeight > 0;
     }
+    SDL_Window *Window::NativeHandle() const noexcept
+    {
+        return window_;
+    }
 }

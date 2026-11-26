@@ -20,28 +20,28 @@ namespace kaisou
     {
         core::FrameTiming timing;
 
-        const platform::InputSnapshot& input;
-        const platform::Window& window;
+        const platform::InputSnapshot &input;
+        const platform::Window &window;
     };
 
     class Application final
     {
     public:
         using FrameCallback =
-            std::function<void(Application&, const FrameContext&)>;
+            std::function<void(Application &, const FrameContext &)>;
 
-        explicit Application(const ApplicationConfig& config);
+        explicit Application(const ApplicationConfig &config);
         ~Application() = default;
 
-        Application(const Application&) = delete;
-        Application& operator=(const Application&) = delete;
+        Application(const Application &) = delete;
+        Application &operator=(const Application &) = delete;
 
-        Application(Application&&) = delete;
-        Application& operator=(Application&&) = delete;
+        Application(Application &&) = delete;
+        Application &operator=(Application &&) = delete;
 
         int Run(
-            const FrameCallback& update = {},
-            const FrameCallback& render = {});
+            const FrameCallback &update = {},
+            const FrameCallback &render = {});
 
         void RequestQuit() noexcept;
 
@@ -49,9 +49,20 @@ namespace kaisou
 
         [[nodiscard]]
         core::u32 TargetFps() const noexcept;
+        [[nodiscard]]
+        const platform::Window &MainWindow() const noexcept;
 
     private:
+        struct RunScope;
+
+        static void OnLiveResize(void *context, const platform::InputSnapshot &input);
+        void ExecuteFrame(const FrameCallback &update, const FrameCallback &render,
+                          const platform::InputSnapshot &input, bool liveResize);
+
         core::FrameLimiter frameLimiter_;
+        core::TimePoint lastFrameStart_{};
+        bool frameExecuting_ = false;
+
         core::FrameLimiter backgroundLimiter_;
 
         platform::Platform platform_;
