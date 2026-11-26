@@ -146,9 +146,15 @@ target_sources(kaisou_rhi_vulkan
         engine/src/rhi/vulkan/device.cpp
         engine/src/rhi/vulkan/timeline_semaphore.cpp
         engine/src/rhi/vulkan/presentation/window_surface.cpp
+        
+        engine/src/rhi/vulkan/capabilities/feature_requirement.cpp
+        engine/src/rhi/vulkan/capabilities/device_capabilities.cpp
+        engine/src/rhi/vulkan/capabilities/capability_contribution.cpp
+
         engine/src/rhi/vulkan/presentation/swapchain.cpp
         engine/src/rhi/vulkan/presentation/frame_resources.cpp
         engine/src/rhi/vulkan/presentation/presentation_context.cpp
+
         engine/src/rhi/vulkan/diagnostics/debug.cpp
         engine/src/rhi/vulkan/diagnostics/gpu_profiler.cpp
         engine/src/rhi/vulkan/diagnostics/gpu_trace.cpp
@@ -162,10 +168,16 @@ target_sources(kaisou_rhi_vulkan
             engine/include/kaisou/rhi/vulkan/instance.hpp
             engine/include/kaisou/rhi/vulkan/device.hpp
             engine/include/kaisou/rhi/vulkan/timeline_semaphore.hpp
+
+            engine/include/kaisou/rhi/vulkan/capabilities/device_capabilities.hpp
+            engine/include/kaisou/rhi/vulkan/capabilities/feature_requirement.hpp
+            engine/include/kaisou/rhi/vulkan/capabilities/capability_contribution.hpp
+
             engine/include/kaisou/rhi/vulkan/presentation/window_surface.hpp
             engine/include/kaisou/rhi/vulkan/presentation/swapchain.hpp
             engine/include/kaisou/rhi/vulkan/presentation/frame_resources.hpp
             engine/include/kaisou/rhi/vulkan/presentation/presentation_context.hpp
+
             engine/include/kaisou/rhi/vulkan/diagnostics/debug.hpp
             engine/include/kaisou/rhi/vulkan/diagnostics/gpu_profiler.hpp
             engine/include/kaisou/rhi/vulkan/diagnostics/gpu_trace.hpp

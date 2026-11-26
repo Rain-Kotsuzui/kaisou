@@ -90,7 +90,7 @@ namespace kaisou::rhi::vulkan
             VkPhysicalDeviceVulkan13Features features13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
             VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR maintenanceFeatures{
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR};
-            // TODO(M2-CAP-03): Move subsystem feature requirements into unified device capability negotiation.
+            // TODO(M2-CAP-05): Apply merged subsystem feature requirements through the typed Vulkan feature chain.
             features12.timelineSemaphore = config.requireTimelineSemaphore
                                                ? VK_TRUE
                                                : VK_FALSE;
@@ -138,7 +138,7 @@ namespace kaisou::rhi::vulkan
             volkLoadDevice(device_);
             debugUtilsEnabled_ = instance.DebugUtilsEnabled();
 
-            // TODO：当前每个 Family 仅使用 Queue[0]，Queue 拓扑和多 Queue 调度后续实现。
+            // TODO(M2-CAP-09): Replace default Queue[0] mapping with explicit deduplicated queue topology.
             graphicsQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::graphics, "graphics");
             presentQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::present, "present");
             computeQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::compute, "compute");

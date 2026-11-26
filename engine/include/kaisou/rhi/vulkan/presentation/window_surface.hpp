@@ -14,7 +14,7 @@ namespace kaisou::platform
 namespace kaisou::rhi::vulkan
 {
     class Instance;
-
+    
     [[nodiscard]]
     std::vector<std::string> RequiredWindowExtensions();
 

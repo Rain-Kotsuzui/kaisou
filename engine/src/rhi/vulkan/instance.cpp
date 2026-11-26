@@ -26,8 +26,8 @@ namespace kaisou::rhi::vulkan
             };
             for (const auto &extension : config.additionalExtensions)
                 append(extension);
-
-            // TODO(M2-CAP-03): 将呈现子系统的必需扩展贡献迁入统一能力协商。
+                
+            // TODO(M2-CAP-04): Consume merged instance-extension contributions instead of appending presentation requirements here.
             append(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
             append(VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
 
