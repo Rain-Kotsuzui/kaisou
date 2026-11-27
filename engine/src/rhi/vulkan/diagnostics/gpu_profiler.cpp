@@ -4,6 +4,7 @@
 #include "kaisou/core/log.hpp"
 #include "kaisou/core/profile.hpp"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <string>
@@ -17,15 +18,23 @@ namespace kaisou::rhi::vulkan
             framesInFlight > 0 && framesInFlight <= std::numeric_limits<core::u32>::max() / 2,
             "GPU profiler requires a nonzero frame slot count with two queries per slot");
 
-        // TODO(M2-CAP-06): Read timestamp support from the unified device capability report.
-        core::u32 familyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(device.PhysicalHandle(), &familyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> families(familyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(device.PhysicalHandle(), &familyCount, families.data());
+        const auto &graphicsQueue = device.GraphicsQueue();
+        if (!graphicsQueue.IsValid())
+        {
+            KAISOU_LOG_WARN("Vulkan", "Graphics Queue unavailable; GPU frame timing disabled");
+            return;
+        }
 
-        const core::u32 validBits = families[device.GraphicsQueue().familyIndex].timestampValidBits;
-        timestampPeriod_ = static_cast<double>(device.Properties().limits.timestampPeriod);
+        const auto &capabilities = device.Capabilities();
+        const auto &families = capabilities.queueFamilies;
+        const auto family =
+            std::ranges::find(families, graphicsQueue.familyIndex, &QueueFamilyCapabilities::familyIndex);
 
+        if (family == families.end())
+            KAISOU_FATAL("Graphics Queue family is missing from selected device capabilities");
+
+        const core::u32 validBits = family->properties.timestampValidBits;
+        timestampPeriod_ = static_cast<double>(capabilities.properties.limits.timestampPeriod);
         if (validBits == 0)
         {
             KAISOU_LOG_WARN("Vulkan", "Graphics Queue timestamps unavailable; GPU frame timing disabled");
@@ -33,8 +42,8 @@ namespace kaisou::rhi::vulkan
         }
 
         timestampMask_ = validBits == 64
-            ? std::numeric_limits<core::u64>::max()
-            : (core::u64{1} << validBits) - 1;
+                             ? std::numeric_limits<core::u64>::max()
+                             : (core::u64{1} << validBits) - 1;
         pending_.resize(framesInFlight, 0);
 
         // 分配和日志放在获取裸 Vulkan 资源之前，避免构造异常留下查询池。

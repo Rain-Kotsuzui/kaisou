@@ -1,59 +1,30 @@
+#include "kaisou/rhi/vulkan/device.hpp"
+#include "kaisou/rhi/vulkan/instance.hpp"
+#include "kaisou/rhi/vulkan/enumerate.hpp"
+#include "kaisou/rhi/vulkan/diagnostics/debug.hpp"
+#include "kaisou/rhi/vulkan/capabilities/capability_merge.hpp"
+#include "kaisou/rhi/vulkan/capabilities/device_capability_query.hpp"
+#include "kaisou/rhi/vulkan/capabilities/device_feature_chain.hpp"
+#include "kaisou/rhi/vulkan/capabilities/queue_topology.hpp"
 
 #include "kaisou/core/assert.hpp"
 #include "kaisou/core/log.hpp"
 
-#include "kaisou/rhi/vulkan/instance.hpp"
-#include "kaisou/rhi/vulkan/presentation/window_surface.hpp"
-#include "kaisou/rhi/vulkan/device.hpp"
-#include "kaisou/rhi/vulkan/diagnostics/debug.hpp"
-#include "kaisou/core/types.hpp"
-
-#include <VkBootstrap.h>
-
 #include <algorithm>
-#include <string>
-#include <string_view>
-#include <utility>
 #include <array>
 #include <cstdio>
+#include <utility>
+#include <vector>
+#include <fmt/format.h>
 
 namespace kaisou::rhi::vulkan
 {
     namespace
     {
-        vkb::Instance MakeBootstrapInstance(const Instance &instance)
+        DeviceQueue GetPrimaryQueue(const core::Span<const DeviceQueue> pool)
         {
-            vkb::Instance bootstrapInstance;
-
-            bootstrapInstance.instance = instance.Handle();
-            bootstrapInstance.instance_version = VK_API_VERSION_1_4;
-            bootstrapInstance.api_version = VK_API_VERSION_1_4;
-            bootstrapInstance.fp_vkGetInstanceProcAddr = vkGetInstanceProcAddr;
-            bootstrapInstance.fp_vkGetDeviceProcAddr = vkGetDeviceProcAddr;
-
-            return bootstrapInstance;
+            return pool.empty() ? DeviceQueue{} : pool.front();
         }
-
-        DeviceQueue GetRequiredQueue(const vkb::Device &device, const vkb::QueueType type, const std::string_view name)
-        {
-            auto queueResult = device.get_queue_and_index(type);
-
-            if (!queueResult)
-            {
-                const std::string message =
-                    "Failed to get " +
-                    std::string{name} +
-                    " queue: " +
-                    queueResult.error().message();
-
-                KAISOU_FATAL(message);
-            }
-
-            const auto [handle, familyIndex] = std::move(queueResult).value();
-
-            return DeviceQueue{handle, familyIndex};
-        }
-
         const char *DeviceTypeName(
             const VkPhysicalDeviceType type)
         {
@@ -78,71 +49,155 @@ namespace kaisou::rhi::vulkan
     }
 
     Device::Device(
-        const Instance &instance,
-        const WindowSurface &surface,
-        const DeviceConfig &config)
+        const Instance &instance, MergedCapabilityRequests &requests,
+        const VkSurfaceKHR surface, const DeviceConfig &config)
     {
         try
         {
-            const auto bootstrapInstance = MakeBootstrapInstance(instance);
+            const auto physicalDevices = EnumerateProperties<VkPhysicalDevice>(
+                "vkEnumeratePhysicalDevices", vkEnumeratePhysicalDevices, instance.Handle());
 
-            VkPhysicalDeviceVulkan12Features features12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-            VkPhysicalDeviceVulkan13Features features13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-            VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR maintenanceFeatures{
-                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR};
-            // TODO(M2-CAP-05): Apply merged subsystem feature requirements through the typed Vulkan feature chain.
-            features12.timelineSemaphore = config.requireTimelineSemaphore
-                                               ? VK_TRUE
-                                               : VK_FALSE;
+            VkPhysicalDevice selectedPhysicalDevice = VK_NULL_HANDLE;
+            DeviceCapabilities selectedCapabilities;
+            QueueTopology selectedTopology;
 
-            features13.dynamicRendering = VK_TRUE;
-            features13.synchronization2 = VK_TRUE;
-            maintenanceFeatures.swapchainMaintenance1 = VK_TRUE;
-
-            vkb::PhysicalDeviceSelector selector{bootstrapInstance, surface.Handle()};
-
-            selector
-                .set_minimum_version(1, 4)
-                .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
-                .allow_any_gpu_device_type(config.allowNonDiscreteFallback)
-                .require_present(true)
-                .set_required_features_12(features12)
-                .set_required_features_13(features13)
-                .add_required_extension(VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)
-                .add_required_extension_features(maintenanceFeatures);
-
-            auto physicalResult = selector.select();
-
-            if (!physicalResult)
+            for (const auto physicalDevice : physicalDevices)
             {
-                const std::string message = physicalResult.error().message();
-                KAISOU_FATAL(message);
+                auto capabilities = QueryDeviceCapabilities(physicalDevice, surface);
+                const bool discrete =
+                    capabilities.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+                if (!discrete && !config.allowNonDiscreteFallback)
+                {
+                    KAISOU_LOG_INFO(
+                        "Vulkan", "Skipping GPU '{}': non-discrete fallback disabled",
+                        capabilities.properties.deviceName);
+                    continue;
+                }
+
+                if (!CheckDeviceCapabilityRequests(requests, capabilities))
+                    continue;
+
+                // Vulkan requires this extension when the device advertises it.
+                constexpr const char *portabilitySubset = "VK_KHR_portability_subset";
+                const bool portabilitySupported =
+                    std::ranges::find(capabilities.extensions, portabilitySubset) != capabilities.extensions.end();
+
+                const bool portabilityRequested = std::ranges::any_of(
+                    requests.deviceExtensions, [&](const MergedExtensionRequest &request)
+                    { return request.name == portabilitySubset &&
+                             request.requirement != FeatureRequirement::Disabled; });
+
+                if (portabilitySupported && !portabilityRequested)
+                {
+                    KAISOU_LOG_WARN(
+                        "Vulkan", "GPU '{}': portability_subset requires an explicit request; reject candidate",
+                        capabilities.properties.deviceName);
+                    continue;
+                }
+
+                QueueTopology topology;
+                if (!BuildQueueTopology(requests.deviceQueues, capabilities, topology))
+                    continue;
+
+                if (selectedPhysicalDevice == VK_NULL_HANDLE || discrete)
+                {
+                    selectedPhysicalDevice = physicalDevice;
+                    selectedCapabilities = std::move(capabilities);
+                    selectedTopology = std::move(topology);
+                }
+
+                if (discrete)
+                    break;
             }
 
-            const auto physicalDevice = std::move(physicalResult).value();
+            if (selectedPhysicalDevice == VK_NULL_HANDLE)
+                KAISOU_FATAL("No physical device satisfies capability, queue and device-selection requirements");
 
-            vkb::DeviceBuilder deviceBuilder{physicalDevice};
-            auto deviceResult = deviceBuilder.build();
+            ResolveDeviceCapabilityRequests(requests, selectedCapabilities);
 
-            if (!deviceResult)
+            EnabledDeviceFeatures enablement;
+            enablement.apiVersion = std::max(requests.minimumApiVersion, VK_API_VERSION_1_4);
+            enablement.debugUtilsEnabled = instance.EnabledFeatures().debugUtilsEnabled;
+
+            enablement.extensions.reserve(requests.deviceExtensions.size());
+            for (const auto &request : requests.deviceExtensions)
+                enablement.extensions.push_back(request.name);
+
+            enablement.features.reserve(requests.deviceFeatures.size());
+            for (const auto &request : requests.deviceFeatures)
+                enablement.features.push_back(request.feature);
+
+            std::vector<const char *> extensionNames;
+            extensionNames.reserve(enablement.extensions.size());
+            for (const auto &extension : enablement.extensions)
+                extensionNames.push_back(extension.c_str());
+
+            std::vector<std::vector<float>> priorities;
+            priorities.reserve(selectedTopology.families.size());
+            for (const auto &family : selectedTopology.families)
+                priorities.emplace_back(family.queueCount, 1.0f);
+
+            std::vector<VkDeviceQueueCreateInfo> queueInfos;
+            queueInfos.reserve(selectedTopology.families.size());
+
+            for (std::size_t index = 0; index < selectedTopology.families.size(); ++index)
             {
-                const std::string message = deviceResult.error().message();
-                KAISOU_FATAL(message);
+                const auto &family = selectedTopology.families[index];
+
+                VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+                queueInfo.queueFamilyIndex = family.familyIndex;
+                queueInfo.queueCount = family.queueCount;
+                queueInfo.pQueuePriorities = priorities[index].data();
+                queueInfos.push_back(queueInfo);
             }
 
-            const auto builtDevice = std::move(deviceResult).value();
+            DeviceFeatureChain featureChain;
+            featureChain.ConfigureEnablement(enablement.features);
 
-            physicalDevice_ = physicalDevice.physical_device;
-            device_ = builtDevice.device;
-            properties_ = physicalDevice.properties;
+            VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+            createInfo.pNext = &featureChain.Head();
+            createInfo.queueCreateInfoCount = static_cast<core::u32>(queueInfos.size());
+            createInfo.pQueueCreateInfos = queueInfos.data();
+            createInfo.enabledExtensionCount = static_cast<core::u32>(extensionNames.size());
+            createInfo.ppEnabledExtensionNames = extensionNames.empty() ? nullptr : extensionNames.data();
+            createInfo.pEnabledFeatures = nullptr;
+
+            VkDevice createdDevice = VK_NULL_HANDLE;
+            const VkResult result = vkCreateDevice(selectedPhysicalDevice, &createInfo, nullptr, &createdDevice);
+
+            if (result != VK_SUCCESS)
+                KAISOU_FATAL(fmt::format("vkCreateDevice failed: VkResult {}", static_cast<int>(result)));
+
+            // Publish ownership immediately after successful creation.
+            device_ = createdDevice;
+            physicalDevice_ = selectedPhysicalDevice;
+            capabilities_ = std::move(selectedCapabilities);
             volkLoadDevice(device_);
-            debugUtilsEnabled_ = instance.DebugUtilsEnabled();
 
-            // TODO(M2-CAP-09): Replace default Queue[0] mapping with explicit deduplicated queue topology.
-            graphicsQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::graphics, "graphics");
-            presentQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::present, "present");
-            computeQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::compute, "compute");
-            transferQueue_ = GetRequiredQueue(builtDevice, vkb::QueueType::transfer, "transfer");
+            enabledFeatures_ = std::move(enablement);
+
+            queueRoles_ = std::move(selectedTopology.roles);
+
+            std::size_t queueCount = 0;
+            for (const auto &family : selectedTopology.families)
+                queueCount += family.queueCount;
+
+            queues_.reserve(queueCount);
+            for (const auto &family : selectedTopology.families)
+            {
+                for (core::u32 queueIndex = 0; queueIndex < family.queueCount; ++queueIndex)
+                {
+                    DeviceQueue queue{VK_NULL_HANDLE, family.familyIndex, queueIndex};
+                    vkGetDeviceQueue(device_, queue.familyIndex, queue.queueIndex, &queue.handle);
+                    queues_.push_back(queue);
+                }
+            }
+
+            graphicsQueue_ = GetPrimaryQueue(QueuePool(DeviceQueueRole::Graphics));
+            presentQueue_ = GetPrimaryQueue(QueuePool(DeviceQueueRole::Present));
+            computeQueue_ = GetPrimaryQueue(QueuePool(DeviceQueueRole::Compute));
+            transferQueue_ = GetPrimaryQueue(QueuePool(DeviceQueueRole::Transfer));
 
 #if KAISOU_ENABLE_GPU_DEBUG
             const auto nameObject = [this](
@@ -155,21 +210,20 @@ namespace kaisou::rhi::vulkan
 
             nameObject(VK_OBJECT_TYPE_DEVICE, reinterpret_cast<std::uint64_t>(device_), "Kaisou.Device");
 
-            const std::array<const DeviceQueue *, 4> queues{
-                &graphicsQueue_, &presentQueue_, &computeQueue_, &transferQueue_};
-
-            for (std::size_t index = 0; index < queues.size(); ++index)
+            for (std::size_t index = 0; index < queues_.size(); ++index)
             {
-                const auto &queue = *queues[index];
-                const auto previous = core::Span{queues}.first(index);
+                const auto &queue = queues_[index];
+                const auto previous = core::Span<const DeviceQueue>{queues_}.first(index);
 
-                if (std::ranges::find(previous, queue.handle, &DeviceQueue::handle) != previous.end())
+                if (!queue.IsValid() ||
+                    std::ranges::find(previous, queue.handle, &DeviceQueue::handle) != previous.end())
                     continue;
 
                 char name[128];
                 (void)std::snprintf(
-                    name, sizeof(name), "Queue[family=%u]%s%s%s%s",
+                    name, sizeof(name), "Queue[family=%u,index=%u]%s%s%s%s",
                     static_cast<unsigned int>(queue.familyIndex),
+                    static_cast<unsigned int>(queue.queueIndex),
                     queue.handle == graphicsQueue_.handle ? " [Graphics]" : "",
                     queue.handle == presentQueue_.handle ? " [Present]" : "",
                     queue.handle == computeQueue_.handle ? " [Compute]" : "",
@@ -179,26 +233,36 @@ namespace kaisou::rhi::vulkan
             }
 #endif
 
-            KAISOU_LOG_INFO(
-                "Vulkan",
-                "Selected GPU: {} ({}, Vulkan {}.{}.{})",
-                properties_.deviceName,
-                DeviceTypeName(properties_.deviceType),
-                VK_API_VERSION_MAJOR(properties_.apiVersion),
-                VK_API_VERSION_MINOR(properties_.apiVersion),
-                VK_API_VERSION_PATCH(properties_.apiVersion));
+            const auto &properties = capabilities_.properties;
 
             KAISOU_LOG_INFO(
-                "Vulkan",
-                "Queue families: graphics {}, present {}, "
-                "compute {}, transfer {}",
-                graphicsQueue_.familyIndex,
-                presentQueue_.familyIndex,
-                computeQueue_.familyIndex,
-                transferQueue_.familyIndex);
+                "Vulkan", "Selected GPU: {} ({}, Vulkan {}.{}.{})",
+                properties.deviceName,
+                DeviceTypeName(properties.deviceType),
+                VK_API_VERSION_MAJOR(properties.apiVersion),
+                VK_API_VERSION_MINOR(properties.apiVersion),
+                VK_API_VERSION_PATCH(properties.apiVersion));
+
             KAISOU_LOG_INFO(
-                "Vulkan",
-                "Device initialized with VK_KHR_swapchain_maintenance1, swapchainMaintenance1 true");
+                "Vulkan", "Effective Vulkan API contract: {}.{}.{}",
+                VK_API_VERSION_MAJOR(enabledFeatures_.apiVersion),
+                VK_API_VERSION_MINOR(enabledFeatures_.apiVersion),
+                VK_API_VERSION_PATCH(enabledFeatures_.apiVersion));
+
+            for (const auto &extension : enabledFeatures_.extensions)
+                KAISOU_LOG_INFO("Vulkan", "Enabled device extension: {}", extension);
+
+            for (const auto feature : enabledFeatures_.features)
+                KAISOU_LOG_INFO("Vulkan", "Enabled device feature: {}", static_cast<core::u32>(feature));
+
+            for (const auto &family : selectedTopology.families)
+                KAISOU_LOG_INFO(
+                    "Vulkan", "Created queue family {}: {} queue(s)", family.familyIndex, family.queueCount);
+            
+                    for (const auto &mapping : queueRoles_)
+                KAISOU_LOG_INFO(
+                    "Vulkan", "Queue role {}: family {}, Primary index 0, count {}",
+                    static_cast<core::u32>(mapping.role), mapping.familyIndex, mapping.queueCount);
         }
         catch (...)
         {
@@ -232,9 +296,33 @@ namespace kaisou::rhi::vulkan
         return device_;
     }
 
+    const DeviceCapabilities &Device::Capabilities() const noexcept
+    {
+        return capabilities_;
+    }
+
     const VkPhysicalDeviceProperties &Device::Properties() const noexcept
     {
-        return properties_;
+        return capabilities_.properties;
+    }
+    core::Span<const DeviceQueue> Device::QueuePool(const DeviceQueueRole role) const noexcept
+    {
+        const auto mapping = std::ranges::find(queueRoles_, role, &QueueRoleMapping::role);
+        if (mapping == queueRoles_.end())
+            return {};
+
+        const auto first = std::ranges::find(queues_, mapping->familyIndex, &DeviceQueue::familyIndex);
+        if (first == queues_.end())
+            KAISOU_FATAL("Queue Pool family is missing from Device queues");
+
+        const auto offset = static_cast<std::size_t>(first - queues_.begin());
+        const auto pool = core::Span<const DeviceQueue>{queues_}.subspan(offset);
+
+        if (mapping->queueCount == 0 || mapping->queueCount > pool.size() ||
+            pool[mapping->queueCount - 1].familyIndex != mapping->familyIndex)
+            KAISOU_FATAL("Queue Pool range does not match its role mapping");
+
+        return pool.first(mapping->queueCount);
     }
 
     const DeviceQueue &Device::GraphicsQueue() const noexcept

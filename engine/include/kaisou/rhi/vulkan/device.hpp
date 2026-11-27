@@ -2,21 +2,21 @@
 #define KAI_VULKAN_DEVICE_HPP
 
 #include "kaisou/rhi/vulkan/vulkan.hpp"
+#include "kaisou/rhi/vulkan/capabilities/device_capabilities.hpp"
+#include "kaisou/rhi/vulkan/capabilities/queue_topology.hpp"
 
+#include <vector>
 #include <cstdint>
 
 namespace kaisou::rhi::vulkan
 {
     class Instance;
-    class WindowSurface;
+    struct MergedCapabilityRequests;
 
     struct DeviceConfig
     {
         // 优先独显，允许集显、虚拟 GPU 回退。
         bool allowNonDiscreteFallback = true;
-
-        // Timeline Semaphore 作为必需能力
-        bool requireTimelineSemaphore = true;
     };
 
     struct DeviceQueue
@@ -24,6 +24,7 @@ namespace kaisou::rhi::vulkan
         VkQueue handle = VK_NULL_HANDLE;
 
         std::uint32_t familyIndex = VK_QUEUE_FAMILY_IGNORED;
+        std::uint32_t queueIndex = 0;
 
         [[nodiscard]]
         bool IsValid() const noexcept
@@ -37,9 +38,8 @@ namespace kaisou::rhi::vulkan
     {
     public:
         Device(
-            const Instance &instance,
-            const WindowSurface &surface,
-            const DeviceConfig &config = {});
+            const Instance &instance, MergedCapabilityRequests &requests,
+            VkSurfaceKHR surface = VK_NULL_HANDLE, const DeviceConfig &config = {});
 
         ~Device();
 
@@ -52,7 +52,8 @@ namespace kaisou::rhi::vulkan
         VkPhysicalDevice PhysicalHandle() const noexcept;
         [[nodiscard]]
         VkDevice Handle() const noexcept;
-
+        [[nodiscard]]
+        const DeviceCapabilities &Capabilities() const noexcept;
         [[nodiscard]]
         const VkPhysicalDeviceProperties &Properties() const noexcept;
 
@@ -64,8 +65,15 @@ namespace kaisou::rhi::vulkan
         const DeviceQueue &ComputeQueue() const noexcept;
         [[nodiscard]]
         const DeviceQueue &TransferQueue() const noexcept;
+        [[nodiscard]]
+        core::Span<const DeviceQueue> QueuePool(DeviceQueueRole role) const noexcept;
 
-        [[nodiscard]] bool DebugUtilsEnabled() const noexcept { return debugUtilsEnabled_; }
+        [[nodiscard]] bool DebugUtilsEnabled() const noexcept { return enabledFeatures_.debugUtilsEnabled; }
+        [[nodiscard]]
+        const EnabledDeviceFeatures &EnabledFeatures() const noexcept
+        {
+            return enabledFeatures_;
+        }
 
     private:
         void Destroy() noexcept;
@@ -73,15 +81,15 @@ namespace kaisou::rhi::vulkan
         VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
         VkDevice device_ = VK_NULL_HANDLE;
 
-        VkPhysicalDeviceProperties properties_{};
-
+        DeviceCapabilities capabilities_;
+        EnabledDeviceFeatures enabledFeatures_;
+        std::vector<DeviceQueue> queues_;
+        std::vector<QueueRoleMapping> queueRoles_;
+        
         DeviceQueue graphicsQueue_;
         DeviceQueue presentQueue_;
         DeviceQueue computeQueue_;
         DeviceQueue transferQueue_;
-
-        // TODO(M2-CAP-06): Merge this inherited extension state into the unified capability report.
-        bool debugUtilsEnabled_ = false;
     };
 }
 

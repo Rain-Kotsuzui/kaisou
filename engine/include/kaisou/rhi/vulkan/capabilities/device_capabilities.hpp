@@ -97,7 +97,9 @@ namespace kaisou::rhi::vulkan
         core::u32 apiVersion = 0;
 
         std::vector<std::string> extensions;
-        std::vector<DeviceFeature> features;
+        std::vector<DeviceFeature> features; 
+        // 继承所属 Instance 的扩展启用状态，不属于 Device 扩展列表。
+        bool debugUtilsEnabled = false;
     };
 
     [[nodiscard]]

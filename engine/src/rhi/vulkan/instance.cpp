@@ -2,37 +2,21 @@
 
 #include "kaisou/core/assert.hpp"
 #include "kaisou/core/log.hpp"
-#include "kaisou/rhi/vulkan/presentation/window_surface.hpp"
+#include "kaisou/rhi/vulkan/capabilities/capability_merge.hpp"
+#include "kaisou/rhi/vulkan/enumerate.hpp"
 
 #include <VkBootstrap.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <string>
-#include <utility>
+#include <vector>
+#include <fmt/format.h>
 
 namespace kaisou::rhi::vulkan
 {
     namespace
     {
-        std::vector<std::string> CollectExtensions(const InstanceConfig &config)
-        {
-            auto extensions = RequiredWindowExtensions();
-
-            const auto append = [&extensions](const std::string &extension)
-            {
-                if (std::ranges::find(extensions, extension) == extensions.end())
-                    extensions.push_back(extension);
-            };
-            for (const auto &extension : config.additionalExtensions)
-                append(extension);
-                
-            // TODO(M2-CAP-04): Consume merged instance-extension contributions instead of appending presentation requirements here.
-            append(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
-            append(VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
-
-            return extensions;
-        }
 
         VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
             const VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -79,7 +63,7 @@ namespace kaisou::rhi::vulkan
         }
     }
 
-    Instance::Instance(const InstanceConfig &config)
+    Instance::Instance(MergedCapabilityRequests &requests, const InstanceConfig &config)
     {
         const VkResult initializeResult = volkInitialize();
         if (initializeResult != VK_SUCCESS)
@@ -87,80 +71,107 @@ namespace kaisou::rhi::vulkan
 
         auto systemInfoResult = vkb::SystemInfo::get_system_info(vkGetInstanceProcAddr);
         if (!systemInfoResult)
-        {
-            const std::string message = "Failed to query Vulkan system information: " + systemInfoResult.error().message();
-            KAISOU_FATAL(message);
-        }
+            KAISOU_FATAL("Failed to query Vulkan system information: " + systemInfoResult.error().message());
 
-        auto extensions = CollectExtensions(config);
         const auto &systemInfo = systemInfoResult.value();
-        if (config.enableValidation ||
-            (KAISOU_ENABLE_GPU_DEBUG && systemInfo.is_extension_available(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)))
+        const auto apiVersion = std::max(requests.minimumApiVersion, VK_API_VERSION_1_4);
+
+        if (systemInfo.instance_api_version < apiVersion)
         {
-            if (std::ranges::find(extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == extensions.end())
-                extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-        }
-        else if (KAISOU_ENABLE_GPU_DEBUG)
-        {
-            KAISOU_LOG_WARN("Vulkan", "VK_EXT_debug_utils unavailable; debug annotations disabled");
+            KAISOU_FATAL(fmt::format(
+                "Requested Vulkan API version {}.{}.{} is unavailable",
+                VK_API_VERSION_MAJOR(apiVersion), VK_API_VERSION_MINOR(apiVersion), VK_API_VERSION_PATCH(apiVersion)));
         }
 
-        for (const auto &extension : extensions)
-        {
-            if (!systemInfo.is_extension_available(extension.c_str()))
-            {
-                const std::string message = "Required Vulkan instance extension is unavailable: " + extension;
-                KAISOU_FATAL(message);
-            }
-        }
+        const char *validationLayer = "VK_LAYER_KHRONOS_validation";
+        if (config.enableValidation && !systemInfo.is_layer_available(validationLayer))
+            KAISOU_FATAL("Required Vulkan validation layer is unavailable");
 
-        for (const auto &extension : extensions)
-            KAISOU_LOG_INFO("Vulkan", "Requesting Vulkan instance extension: {}", extension);
-
-        vkb::InstanceBuilder builder{
-            vkGetInstanceProcAddr};
-
-        builder
-            .set_app_name(config.applicationName)
-            .set_app_version(config.applicationVersion)
-            .set_engine_name("Kaisou")
-            .set_engine_version(
-                KAISOU_ENGINE_VERSION_MAJOR,
-                KAISOU_ENGINE_VERSION_MINOR,
-                KAISOU_ENGINE_VERSION_PATCH)
-            .require_api_version(1, 4, 0)
-            .enable_extensions(extensions);
+        auto availableExtensions = EnumerateProperties<VkExtensionProperties>(
+            "vkEnumerateInstanceExtensionProperties", vkEnumerateInstanceExtensionProperties, nullptr);
 
         if (config.enableValidation)
         {
-            builder
-                .enable_validation_layers()
-                .set_debug_callback(DebugCallback)
-                .set_debug_messenger_severity(
-                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-                .set_debug_messenger_type(
-                    VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                    VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                    VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT);
+            const auto layerExtensions = EnumerateProperties<VkExtensionProperties>(
+                "vkEnumerateInstanceExtensionProperties", vkEnumerateInstanceExtensionProperties, validationLayer);
+
+            availableExtensions.insert(
+                availableExtensions.end(), layerExtensions.begin(), layerExtensions.end());
         }
 
-        auto instanceResult = builder.build();
-        if (!instanceResult)
+        ResolveInstanceExtensionRequests(requests, availableExtensions);
+
+        const bool debugUtilsEnabled =
+            std::ranges::find(
+                requests.instanceExtensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+                &MergedExtensionRequest::name) != requests.instanceExtensions.end();
+
+        if (config.enableValidation && !debugUtilsEnabled)
+            KAISOU_FATAL("Validation requires VK_EXT_debug_utils in finalized requests");
+
+        const bool portabilityEnabled =
+            std::ranges::find(
+                requests.instanceExtensions, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+                &MergedExtensionRequest::name) != requests.instanceExtensions.end();
+
+        std::vector<const char *> extensions;
+        extensions.reserve(requests.instanceExtensions.size());
+        for (const auto &request : requests.instanceExtensions)
         {
-            const std::string message = instanceResult.error().message();
-            KAISOU_FATAL(message);
+            extensions.push_back(request.name.c_str());
+            KAISOU_LOG_INFO("Vulkan", "Requesting Vulkan instance extension: {}", request.name);
         }
 
-        const auto builtInstance = std::move(instanceResult).value();
+        VkApplicationInfo applicationInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        applicationInfo.pApplicationName = config.applicationName.c_str();
+        applicationInfo.applicationVersion = config.applicationVersion;
+        applicationInfo.pEngineName = "Kaisou";
+        applicationInfo.engineVersion = VK_MAKE_API_VERSION(
+            0, KAISOU_ENGINE_VERSION_MAJOR, KAISOU_ENGINE_VERSION_MINOR, KAISOU_ENGINE_VERSION_PATCH);
+        applicationInfo.apiVersion = apiVersion;
 
-        instance_ = builtInstance.instance;
-        debugMessenger_ = builtInstance.debug_messenger;
-        validationEnabled_ = config.enableValidation;
-        debugUtilsEnabled_ =
-            std::ranges::find(extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) != extensions.end();
+        VkDebugUtilsMessengerCreateInfoEXT debugInfo{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+        debugInfo.messageSeverity =
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        debugInfo.messageType =
+            VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        debugInfo.pfnUserCallback = DebugCallback;
 
-        volkLoadInstance(instance_);
+        VkInstanceCreateInfo createInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        createInfo.pNext = config.enableValidation ? &debugInfo : nullptr;
+        createInfo.flags = portabilityEnabled ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0;
+        createInfo.pApplicationInfo = &applicationInfo;
+        createInfo.enabledExtensionCount = static_cast<core::u32>(extensions.size());
+        createInfo.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
+        createInfo.enabledLayerCount = config.enableValidation ? 1 : 0;
+        createInfo.ppEnabledLayerNames = config.enableValidation ? &validationLayer : nullptr;
+
+        VkInstance createdInstance = VK_NULL_HANDLE;
+        const VkResult createResult = vkCreateInstance(&createInfo, nullptr, &createdInstance);
+        if (createResult != VK_SUCCESS)
+            KAISOU_FATAL(fmt::format("Failed to create Vulkan instance: VkResult {}", static_cast<int>(createResult)));
+
+        volkLoadInstance(createdInstance);
+
+        VkDebugUtilsMessengerEXT createdMessenger = VK_NULL_HANDLE;
+        if (config.enableValidation)
+        {
+            const VkResult messengerResult =
+                vkCreateDebugUtilsMessengerEXT(createdInstance, &debugInfo, nullptr, &createdMessenger);
+
+            if (messengerResult != VK_SUCCESS)
+            {
+                vkDestroyInstance(createdInstance, nullptr);
+                KAISOU_FATAL(fmt::format(
+                    "Failed to create Vulkan debug messenger: VkResult {}", static_cast<int>(messengerResult)));
+            }
+        }
+
+        instance_ = createdInstance;
+        debugMessenger_ = createdMessenger;
+        enabledFeatures_ = {config.enableValidation, debugUtilsEnabled};
     }
 
     Instance::~Instance()
@@ -184,6 +195,6 @@ namespace kaisou::rhi::vulkan
 
     bool Instance::ValidationEnabled() const noexcept
     {
-        return validationEnabled_;
+        return enabledFeatures_.validationEnabled;
     }
 }

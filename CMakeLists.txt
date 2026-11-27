@@ -150,6 +150,10 @@ target_sources(kaisou_rhi_vulkan
         engine/src/rhi/vulkan/capabilities/feature_requirement.cpp
         engine/src/rhi/vulkan/capabilities/device_capabilities.cpp
         engine/src/rhi/vulkan/capabilities/capability_contribution.cpp
+        engine/src/rhi/vulkan/capabilities/capability_merge.cpp
+        engine/src/rhi/vulkan/capabilities/device_feature_chain.cpp
+        engine/src/rhi/vulkan/capabilities/device_capability_query.cpp
+        engine/src/rhi/vulkan/capabilities/queue_topology.cpp
 
         engine/src/rhi/vulkan/presentation/swapchain.cpp
         engine/src/rhi/vulkan/presentation/frame_resources.cpp
@@ -158,13 +162,15 @@ target_sources(kaisou_rhi_vulkan
         engine/src/rhi/vulkan/diagnostics/debug.cpp
         engine/src/rhi/vulkan/diagnostics/gpu_profiler.cpp
         engine/src/rhi/vulkan/diagnostics/gpu_trace.cpp
+        
     PUBLIC
         FILE_SET public_headers
         TYPE HEADERS
         BASE_DIRS
             "${KAISOU_ENGINE_INCLUDE_DIR}"
         FILES
-            engine/include/kaisou/rhi/vulkan/vulkan.hpp
+            engine/include/kaisou/rhi/vulkan/vulkan.hpp            
+            engine/include/kaisou/rhi/vulkan/enumerate.hpp
             engine/include/kaisou/rhi/vulkan/instance.hpp
             engine/include/kaisou/rhi/vulkan/device.hpp
             engine/include/kaisou/rhi/vulkan/timeline_semaphore.hpp
@@ -172,7 +178,11 @@ target_sources(kaisou_rhi_vulkan
             engine/include/kaisou/rhi/vulkan/capabilities/device_capabilities.hpp
             engine/include/kaisou/rhi/vulkan/capabilities/feature_requirement.hpp
             engine/include/kaisou/rhi/vulkan/capabilities/capability_contribution.hpp
-
+            engine/include/kaisou/rhi/vulkan/capabilities/capability_merge.hpp
+            engine/include/kaisou/rhi/vulkan/capabilities/device_feature_chain.hpp
+            engine/include/kaisou/rhi/vulkan/capabilities/device_capability_query.hpp
+            engine/include/kaisou/rhi/vulkan/capabilities/queue_topology.hpp
+            
             engine/include/kaisou/rhi/vulkan/presentation/window_surface.hpp
             engine/include/kaisou/rhi/vulkan/presentation/swapchain.hpp
             engine/include/kaisou/rhi/vulkan/presentation/frame_resources.hpp
